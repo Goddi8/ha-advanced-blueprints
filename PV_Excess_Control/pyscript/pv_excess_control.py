@@ -283,6 +283,7 @@ def pv_excess_control(
     appliance_minimum_run_time,
     appliance_runtime_deadline,
     enabled,
+    state_wallbox,
 ):
     automation_id = (
         automation_id[11:] if automation_id[:11] == "automation." else automation_id
@@ -329,6 +330,7 @@ def pv_excess_control(
         appliance_minimum_run_time,
         appliance_runtime_deadline,
         enabled,
+        state_wallbox,
     )
 
 
@@ -364,6 +366,7 @@ class PvExcessControl:
     #  situations.
     min_excess_power = -10
     on_time_counter = 0
+    wallbox_active = 2
 
     def __init__(
         self,
@@ -404,6 +407,7 @@ class PvExcessControl:
         appliance_minimum_run_time,
         appliance_runtime_deadline,
         enabled,
+        state_wallbox,
     ):
         if automation_id not in PvExcessControl.instances:
             inst = self
@@ -416,6 +420,7 @@ class PvExcessControl:
         PvExcessControl.load_power = load_power
         PvExcessControl.home_battery_level = home_battery_level
         PvExcessControl.grid_voltage = grid_voltage
+        PvExcessControl.state_wallbox = state_wallbox
         PvExcessControl.import_export_power = import_export_power
         PvExcessControl.home_battery_capacity = home_battery_capacity
         PvExcessControl.solar_production_forecast = solar_production_forecast
@@ -737,8 +742,11 @@ class PvExcessControl:
                         # - current has to be increased
                         # - previously set current was above minimum, alternatively  if appliance can run at min current partially on solar
                         # - If appliance was not just turned on from 0 in last round (as some chargers take a minute to start charging)
+                        state_wallbox = int(_get_num_state(PvExcessControl.state_wallbox))
+                        llog.debug(f'{log_prefix} State Wallbox is {state_wallbox}' )
                         if (
-                            prev_set_amps < target_current
+                            state_wallbox == 2
+                            and prev_set_amps < target_current
                             and (
                                 prev_set_amps >= inst.min_current
                                 or (
