@@ -727,17 +727,6 @@ blueprint:
             - input_boolean
             - switch
           multiple: false
-
-   state_wallbox:
-     name: "State Wallbox"
-     description: "State of wallbox\n
-     This avoids rising power /current when car is not loading."
-     default:
-     selector:
-      entity:
-          domain: sensor
-          multiple: false
-
 mode: single
 triggers:
   - trigger: homeassistant
