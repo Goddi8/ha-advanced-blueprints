@@ -437,6 +437,7 @@ class PvExcessControl:
                 v = max(0.0, min(100.0, v))
             PvExcessControl.min_home_battery_level_start = v
         except Exception:
+            PvExcessControl.min_home_battery_level_start = None
         PvExcessControl.zero_feed_in = bool(zero_feed_in)
         PvExcessControl.zero_feed_in_load = zero_feed_in_load
         PvExcessControl.zero_feed_in_level = float(zero_feed_in_level)
