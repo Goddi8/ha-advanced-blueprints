@@ -284,7 +284,7 @@ def pv_excess_control(
     appliance_runtime_deadline,
     wallbox_state=None,
     wallbox_state_active=None,
-    enabled,
+    enabled=None,
 ):
     automation_id = (
         automation_id[11:] if automation_id[:11] == "automation." else automation_id
