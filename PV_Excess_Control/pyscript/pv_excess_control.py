@@ -424,9 +424,13 @@ class PvExcessControl:
         )
         PvExcessControl.time_of_sunset = time_of_sunset
         PvExcessControl.min_home_battery_level = float(min_home_battery_level)
-        PvExcessControl.min_home_battery_level_start = bool(
-            min_home_battery_level_start
-        )
+        try:
+            v = float(min_home_battery_level_start) if min_home_battery_level_start is not None else None
+            if v is not None:
+                # clamp 0..100
+                v = max(0.0, min(100.0, v))
+            PvExcessControl.min_home_battery_level_start = v
+        except Exception:
         PvExcessControl.zero_feed_in = bool(zero_feed_in)
         PvExcessControl.zero_feed_in_load = zero_feed_in_load
         PvExcessControl.zero_feed_in_level = float(zero_feed_in_level)
@@ -561,91 +565,54 @@ class PvExcessControl:
                 if PvExcessControl.home_battery_level is None:
                     home_battery_level = 100
                 else:
-                    home_battery_level = _get_num_state(
-                        PvExcessControl.home_battery_level
-                    )
+                    home_battery_level = _get_num_state(PvExcessControl.home_battery_level,return_on_error=100)
+                
                 if (
-                    home_battery_level >= PvExcessControl.min_home_battery_level
-                    and PvExcessControl.min_home_battery_level_start
-                ):
-                    # home battery charge is high enough to direct solar power to appliances, if solar power is higher than load power
-                    # calc avg based on pv excess (solar power - load power) according to specified window
-                    avg_excess_power = int(
-                        sum(
-                            PvExcessControl.pv_history[
-                                -inst.appliance_switch_interval :
-                            ]
-                        )
-                        / max(1, inst.appliance_switch_interval)
-                    )
-                    avg_excess_power_off = int(
-                        sum(
-                            PvExcessControl.pv_history[
-                                -inst.appliance_switch_off_interval :
-                            ]
-                        )
-                        / max(1, inst.appliance_switch_off_interval)
-                    )
-                    log.debug(
-                        f"{inst.log_prefix} Home battery charge is sufficient ({home_battery_level}/{PvExcessControl.min_home_battery_level} %)"
-                        f" AND {PvExcessControl.min_home_battery_level_start} is on. "
-                        f"Calculated average excess power based on >> solar power - load power <<: {avg_excess_power} W"
-                    )
-
-                elif (
                     home_battery_level >= PvExcessControl.min_home_battery_level
                     or not self._force_charge_battery(avg_load_power)
                 ):
-                    # home battery charge is high enough to direct solar power to appliances, if solar power is higher than load power
-                    # calc avg based on pv excess (solar power - load power) according to specified window
+                    # Genug SoC oder keine Force-Charge nötig: PV-Exzess (PV - Last) verwenden
                     avg_excess_power = int(
                         sum(
                             PvExcessControl.pv_history[
-                                -inst.appliance_switch_interval :
+                                -inst.appliance_switch_interval:
                             ]
-                        )
-                        / max(1, inst.appliance_switch_interval)
+                        ) / max(1, inst.appliance_switch_interval)
                     )
                     avg_excess_power_off = int(
                         sum(
                             PvExcessControl.pv_history[
-                                -inst.appliance_switch_off_interval :
+                                -inst.appliance_switch_off_interval:
                             ]
-                        )
-                        / max(1, inst.appliance_switch_off_interval)
+                        ) / max(1, inst.appliance_switch_off_interval)
                     )
                     log.debug(
-                        f"{inst.log_prefix} Home battery charge is sufficient ({home_battery_level}/{PvExcessControl.min_home_battery_level} %)"
-                        f" OR remaining solar forecast is higher than remaining capacity of home battery. "
-                        f"Calculated average excess power based on >> solar power - load power <<: {avg_excess_power} W"
+                        f"{inst.log_prefix} Batterie ok (SoC={home_battery_level}/{PvExcessControl.min_home_battery_level} %) "
+                        f"oder Forecast ausreichend. Nutze PV-Exzess: {avg_excess_power} W"
                     )
-
                 else:
-                    # home battery charge is not yet high enough OR battery force charge is necessary.
-                    # Only use excess power (which would otherwise be exported to the grid) for appliance
-                    # calc avg based on export power history according to specified window
+                    # SoC zu niedrig und Force-Charge nötig: echten Export-Überschuss verwenden
                     avg_excess_power = int(
                         sum(
                             PvExcessControl.export_history[
-                                -inst.appliance_switch_interval :
+                                -inst.appliance_switch_interval:
                             ]
-                        )
-                        / max(1, inst.appliance_switch_interval)
+                        ) / max(1, inst.appliance_switch_interval)
                     )
                     avg_excess_power_off = int(
                         sum(
-                            PvExcessControl.pv_history[
-                                -inst.appliance_switch_off_interval :
+                            PvExcessControl.export_history[
+                                -inst.appliance_switch_off_interval:
                             ]
-                        )
-                        / max(1, inst.appliance_switch_off_interval)
+                        ) / max(1, inst.appliance_switch_off_interval)
                     )
                     log.debug(
-                        f"{inst.log_prefix} Home battery charge is not sufficient ({home_battery_level}/{PvExcessControl.min_home_battery_level} %), "
-                        f"OR remaining solar forecast is lower than remaining capacity of home battery. "
-                        f"Calculated average excess power based on >> export power <<: {avg_excess_power} W"
+                        f"{inst.log_prefix} Batterie niedrig (SoC={home_battery_level}/{PvExcessControl.min_home_battery_level} %) "
+                        f"und Force-Charge nötig. Nutze Export-Exzess: {avg_excess_power} W"
                     )
 
+                
+                
                 # add instance including calculated excess power to inverted list (priority from low to high)
                 instances.insert(
                     0,
@@ -1319,7 +1286,24 @@ class PvExcessControl:
                 f'{inst.log_prefix} "Only-Run-Once-Appliance" detected - Appliance was already switched on today - '
                 f"Not switching on again."
             )
-        elif _turn_on(inst.appliance_switch):
+            return
+        if ( 
+            PvExcessControl.home_battery_level is not None
+            and PvExcessControl.min_home_battery_level_start is not None
+            and not inst.enforce_minimum_run 
+        ): 
+            soc = _get_num_state(PvExcessControl.home_battery_level, return_on_error=None) 
+            if soc is not None and soc < PvExcessControl.min_home_battery_level_start: 
+            log.debug( 
+                f"{inst.log_prefix} Start blockiert: SoC {soc:.1f}% < Start-Schwelle " f"{PvExcessControl.min_home_battery_level_start:.1f}%." 
+            ) 
+            return
+        if inst.appliance_once_only and inst.switched_on_today:
+            log.debug(
+                f'{inst.log_prefix} "Only-Run-Once-Appliance" detected - Appliance was already switched on today - '
+                f"Not switching on again."
+            )
+        if _turn_on(inst.appliance_switch):
             inst.switched_on_today = True
             inst.switched_on_time = datetime.datetime.now()
 
