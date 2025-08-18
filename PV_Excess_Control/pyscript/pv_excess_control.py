@@ -1369,10 +1369,11 @@ class PvExcessControl:
         ): 
             soc = _get_num_state(PvExcessControl.home_battery_level, return_on_error=None) 
             if soc is not None and soc < PvExcessControl.min_home_battery_level_start: 
-            log.debug( 
-                f"{inst.log_prefix} Start blockiert: SoC {soc:.1f}% < Start-Schwelle " f"{PvExcessControl.min_home_battery_level_start:.1f}%." 
-            ) 
-            return
+                log.debug( 
+                    f"{inst.log_prefix} Start blockiert: SoC {soc:.1f}% < Start-Schwelle " 
+                    f"{PvExcessControl.min_home_battery_level_start:.1f}%." 
+                ) 
+                return
         if inst.appliance_once_only and inst.switched_on_today:
             log.debug(
                 f'{inst.log_prefix} "Only-Run-Once-Appliance" detected - Appliance was already switched on today - '
