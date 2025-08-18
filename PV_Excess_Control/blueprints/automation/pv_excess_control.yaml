@@ -253,9 +253,13 @@ blueprint:
         - *The home battery will be charged to the specified level *before*
         switching on appliances or to consider solar production forecast.
 
-      default: false
+      default: 25
       selector:
-        boolean:
+        number:
+          min: 0
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
 
     zero_feed_in:
       name: "Zero Feed In"
