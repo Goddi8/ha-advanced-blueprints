@@ -282,6 +282,8 @@ def pv_excess_control(
     appliance_maximum_run_time,
     appliance_minimum_run_time,
     appliance_runtime_deadline,
+    wallbox_state=None,
+    wallbox_state_active=None,
     enabled,
 ):
     automation_id = (
@@ -328,6 +330,8 @@ def pv_excess_control(
         appliance_maximum_run_time,
         appliance_minimum_run_time,
         appliance_runtime_deadline,
+        wallbox_state,
+        wallbox_state_active,
         enabled,
     )
 
@@ -403,6 +407,8 @@ class PvExcessControl:
         appliance_maximum_run_time,
         appliance_minimum_run_time,
         appliance_runtime_deadline,
+        wallbox_state,
+        wallbox_state_active,
         enabled,
     ):
         if automation_id not in PvExcessControl.instances:
@@ -453,13 +459,23 @@ class PvExcessControl:
         inst.appliance_maximum_run_time = appliance_maximum_run_time
         inst.appliance_minimum_run_time = appliance_minimum_run_time
         inst.appliance_runtime_deadline = _get_time_object(appliance_runtime_deadline)
+        inst.wallbox_state_entity = wallbox_state 
+        try:
+            inst.wallbox_active_status = (
+                float(wallbox_state_active) if wallbox_state_active is not None else None 
+            )
+        except Exception: 
+            inst.wallbox_active_status = None
         inst.enforce_minimum_run = False
         inst.min_solar_percent = min_solar_percent / 100
         inst.enabled = enabled
         inst.phases = int(appliance_phases) if appliance_phases and str(appliance_phases).isdigit() else 1
         inst.log_prefix = f"[{inst.appliance_switch} {inst.automation_id} (Prio {inst.appliance_priority})]"
         inst.domain = inst.appliance_switch.split(".")[0]
-
+        if inst.wallbox_state_entity and inst.wallbox_active_status is not None: 
+            log.debug(
+                f"{inst.log_prefix} Wallbox-Statusprüfung aktiv: " f"{inst.wallbox_state_entity} == {inst.wallbox_active_status}" 
+            )
         # start if needed
         if inst.automation_id not in PvExcessControl.instances:
             inst.switched_on_today = False
@@ -646,6 +662,64 @@ class PvExcessControl:
                     log.debug(
                         f"{inst.log_prefix} Appliance is already switched on and has run for {(run_time / 60):.1f} minutes."
                     )
+                    # NEW: Check wallbox - increase only if status = active"
+                    if (
+                        inst.dynamic_current_appliance
+                        and inst.wallbox_state_entity
+                        and inst.wallbox_active_status is not None
+                    ):
+                        current_status = _get_num_state(inst.wallbox_state_entity, return_on_error=None)
+                    
+                        if current_status is None or current_status != inst.wallbox_active_status:
+                            # aktuellen Strom bestimmen
+                            if inst.actual_power is None:
+                                actual_current = round(inst.defined_current, 1)
+                            else:
+                                actual_current = round(
+                                    _get_num_state(inst.actual_power)
+                                    / (PvExcessControl.grid_voltage * inst.phases),
+                                    1,
+                                )
+                    
+                            prev_set_amps = _get_num_state(
+                                inst.appliance_current_set_entity, return_on_error=inst.min_current
+                            )
+                            target = inst.min_current
+                    
+                            if prev_set_amps > target:
+                                if inst.current_interval_counter >= inst.appliance_current_interval:
+                                    _set_value(inst.appliance_current_set_entity, target)
+                                    log.info(
+                                        f"{inst.log_prefix} Wallbox nicht aktiv (Status={current_status}), setze Strom auf Mindeststrom {target}A."
+                                    )
+                                    inst.current_interval_counter = 0
+                    
+                                    # History anpassen (freigewordene Leistung)
+                                    diff_power = int(
+                                        max(0.0, (actual_current - target))
+                                        * PvExcessControl.grid_voltage
+                                        * inst.phases
+                                    )
+                                    if diff_power > 0:
+                                        log.info(
+                                            f"{inst.log_prefix} Adjusting power history by {diff_power}W wegen Wallbox inaktiv → auf Mindeststrom."
+                                        )
+                                        self._adjust_pwr_history(inst, diff_power)
+                                else:
+                                    log.debug(
+                                        f"{inst.log_prefix} Wallbox nicht aktiv, aber Intervall für Stromänderung noch nicht erreicht "
+                                        f"({inst.current_interval_counter}/{inst.appliance_current_interval})."
+                                    )
+                            else:
+                                log.debug(
+                                    f"{inst.log_prefix} Wallbox nicht aktiv – bleibe bei Mindeststrom {target}A."
+                                )
+                    
+                            inst.previous_current_buffer = 0
+                            # no further checks
+                            continue
+                    
+                    # increase if active
                     if (
                         avg_excess_power >= PvExcessControl.min_excess_power
                         and inst.dynamic_current_appliance
