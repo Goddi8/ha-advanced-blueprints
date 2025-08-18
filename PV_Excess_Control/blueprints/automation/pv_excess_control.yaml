@@ -720,6 +720,22 @@ blueprint:
         entity:
           domain: sensor
           multiple: false
+    wallbox_state:
+      name: "Sensor for wallbox state"
+      description: >
+        Sensor which represents the state for the wallbox
+      
+      default:
+      selector:
+        entity:
+          domain: sensor
+          multiple: false
+    wallbox_state_active:
+      name: "Laoding state wallbox"
+      description: >
+        Status representing active wallbox 
+      selector:
+        number:          
     enabled:
       name: "Enable Device Switch"
       description: >
@@ -775,4 +791,6 @@ action:
       appliance_maximum_run_time: !input appliance_maximum_run_time
       appliance_minimum_run_time: !input appliance_minimum_run_time
       appliance_runtime_deadline: !input appliance_runtime_deadline
+      wallbox_state: !input wallbox_state
+      wallbox_state_active: !input wallbox_state_active
       enabled: !input enabled
