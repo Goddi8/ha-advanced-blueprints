@@ -521,6 +521,34 @@ blueprint:
           step: 1
           unit_of_measurement: min
 
+    appliance_forecast_runtime:
+      name: "Forecast runtime for run-once appliances"
+      description: >
+        Runtime target used only for the forecast-based shutdown check of
+        run-once appliances.
+
+        If a run-once appliance has already been switched on, but the remaining
+        PV forecast is too low to provide enough excess power to complete this
+        runtime target, the appliance will be switched off and kept off for the
+        rest of the day.
+
+        This setting is independent from the minimum runtime logic above.
+
+        **[NOTE]**
+
+        - Only applies when "Only-Run-Once-Appliance" is enabled
+
+        - Requires time_of_sunset and solar_production_forecast
+
+        - Set to 0 to disable this feature
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1440
+          step: 1
+          unit_of_measurement: min
+
     appliance_maximum_run_time:
       name: "Appliance maximum daily runtime"
       description: >
@@ -790,6 +818,7 @@ action:
       appliance_once_only: !input appliance_once_only
       appliance_maximum_run_time: !input appliance_maximum_run_time
       appliance_minimum_run_time: !input appliance_minimum_run_time
+      appliance_forecast_runtime: !input appliance_forecast_runtime
       appliance_runtime_deadline: !input appliance_runtime_deadline
       wallbox_state: !input wallbox_state
       wallbox_state_active: !input wallbox_state_active
