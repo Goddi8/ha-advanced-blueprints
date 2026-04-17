@@ -920,6 +920,32 @@ class PvExcessControl:
 
                 # -------------------------------------------------------------------
                 if _get_state(inst.appliance_switch) == "on":
+                    run_time = (
+                        inst.daily_run_time
+                        + (
+                            datetime.datetime.now() - inst.switched_on_time
+                        ).total_seconds()
+                    ) / 60
+
+                    # For run-once appliances: if remaining PV excess forecast is not enough
+                    # to finish the minimum runtime, switch off and keep it off for today.
+                    if (
+                        inst.appliance_once_only
+                        and self._forecast_too_low_for_remaining_runtime(inst, run_time)
+                    ):
+                        log.info(
+                            f"{inst.log_prefix} Remaining PV excess forecast is too low to complete minimum runtime. "
+                            f"Switching off appliance for the rest of the day."
+                        )
+                        power_consumption = self.switch_off(inst)
+                        if power_consumption != 0:
+                            prev_consumption_sum += power_consumption
+                            log.debug(
+                                f"{inst.log_prefix} Added {power_consumption=} W to prev_consumption_sum, "
+                                f"which is now {prev_consumption_sum} W."
+                            )
+                        continue
+
                     # check if inst.appliance_priority > 1000 and switching of will cause excess. In that case keep it on
                     if inst.appliance_priority > 1000:
                         if inst.actual_power is None:
@@ -944,12 +970,6 @@ class PvExcessControl:
 
                     # Check if appliance already run its maximum runtime and if so, turn it off
                     # TODO: this approach does not work when the appliance gets switched on manually, outside of this automation
-                    run_time = (
-                        inst.daily_run_time
-                        + (
-                            datetime.datetime.now() - inst.switched_on_time
-                        ).total_seconds()
-                    ) / 60
                     log.debug(
                         f"{inst.log_prefix} Appliance is on, and it has run for {run_time:.1f} out of maximum {inst.appliance_maximum_run_time:.1f} minutes"
                     )
@@ -1610,6 +1630,94 @@ class PvExcessControl:
                 return True
 
         return False
+
+    def _forecast_too_low_for_remaining_runtime(self, inst, current_run_time) -> bool:
+        """
+        Check whether remaining PV excess forecast is insufficient to finish
+        the appliance minimum runtime for today.
+        """
+        if (
+            inst.appliance_minimum_run_time <= 0
+            or PvExcessControl.solar_production_forecast is None
+            or PvExcessControl.time_of_sunset is None
+        ):
+            return False
+
+        forecast_margin = 1.2  # 20% safety margin
+
+        remaining_runtime_min = max(
+            0.0, inst.appliance_minimum_run_time - float(current_run_time)
+        )
+        if remaining_runtime_min <= 0:
+            return False
+
+        defined_power = (
+            inst.defined_current * PvExcessControl.grid_voltage * inst.phases
+        )
+        required_energy_kwh = (defined_power * (remaining_runtime_min / 60.0)) / 1000.0
+        required_energy_with_margin_kwh = required_energy_kwh * forecast_margin
+
+        # Required excess power to run the appliance meaningfully.
+        # Dynamic-current appliances may run with partial solar at start threshold.
+        if inst.dynamic_current_appliance:
+            required_power_w = defined_power * max(0.0, min(1.0, inst.min_solar_percent))
+        else:
+            required_power_w = defined_power
+        required_power_with_margin_w = required_power_w * forecast_margin
+
+        remaining_forecast_kwh = _get_num_state(
+            PvExcessControl.solar_production_forecast, return_on_error=None
+        )
+        if remaining_forecast_kwh is None:
+            return False
+
+        try:
+            if PvExcessControl.import_export_power:
+                import_export = _get_num_state(
+                    PvExcessControl.import_export_power, return_on_error=0
+                )
+                load_power = _get_num_state(PvExcessControl.pv_power, return_on_error=0) + import_export
+            else:
+                load_power = _get_num_state(PvExcessControl.load_power, return_on_error=0)
+
+            sunset_string = _get_state(PvExcessControl.time_of_sunset)
+            sunset_time = datetime.datetime.fromisoformat(sunset_string)
+            time_now = datetime.datetime.now(datetime.timezone.utc)
+            time_to_sunset_h = max(
+                0.0, (sunset_time - time_now).total_seconds() / (60 * 60)
+            )
+            remaining_usage_kwh = time_to_sunset_h * load_power / 1000.0
+        except Exception as e:
+            log.error(
+                f"{inst.log_prefix} Could not evaluate remaining PV excess forecast: {e}"
+            )
+            return False
+
+        remaining_excess_kwh = remaining_forecast_kwh - remaining_usage_kwh
+
+        # Energy criterion (enough total excess energy left today)
+        energy_too_low = remaining_excess_kwh < required_energy_with_margin_kwh
+
+        # Power criterion (enough average excess power left until sunset)
+        # This catches cases where total energy may be enough, but available power is too low.
+        if time_to_sunset_h > 0:
+            available_avg_excess_power_w = (remaining_excess_kwh / time_to_sunset_h) * 1000.0
+        else:
+            available_avg_excess_power_w = 0.0
+        power_too_low = available_avg_excess_power_w < required_power_with_margin_w
+
+        is_too_low = energy_too_low or power_too_low
+
+        log.debug(
+            f"{inst.log_prefix} Remaining runtime need: {remaining_runtime_min:.1f} min "
+            f"(~{required_energy_kwh:.2f} kWh, with margin: {required_energy_with_margin_kwh:.2f} kWh), remaining forecast excess: "
+            f"{remaining_excess_kwh:.2f} kWh (forecast {remaining_forecast_kwh:.2f} - "
+            f"load {remaining_usage_kwh:.2f}). Required power: {required_power_w:.0f} W "
+            f"(with margin: {required_power_with_margin_w:.0f} W), "
+            f"available avg excess power: {available_avg_excess_power_w:.0f} W. "
+            f"Too low -> energy: {energy_too_low}, power: {power_too_low}, result: {is_too_low}"
+        )
+        return is_too_low
 
     def calculate_pwr_reducible(self, max_priority):
         """
