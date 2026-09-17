@@ -285,6 +285,7 @@ def pv_excess_control(
     enabled,
     wallbox_state=None,
     wallbox_state_active=None,
+    appliance_forecast_runtime=None,
 ):
     automation_id = (
         automation_id[11:] if automation_id[:11] == "automation." else automation_id
@@ -333,6 +334,7 @@ def pv_excess_control(
         wallbox_state,
         wallbox_state_active,
         enabled,
+        appliance_forecast_runtime,
     )
 
 
@@ -410,6 +412,7 @@ class PvExcessControl:
         wallbox_state,
         wallbox_state_active,
         enabled,
+        appliance_forecast_runtime=None,
     ):
         if automation_id not in PvExcessControl.instances:
             inst = self
@@ -459,6 +462,14 @@ class PvExcessControl:
         inst.appliance_once_only = appliance_once_only
         inst.appliance_maximum_run_time = appliance_maximum_run_time
         inst.appliance_minimum_run_time = appliance_minimum_run_time
+        try:
+            inst.appliance_forecast_runtime = (
+                float(appliance_forecast_runtime)
+                if appliance_forecast_runtime is not None
+                else 0.0
+            )
+        except Exception:
+            inst.appliance_forecast_runtime = 0.0
         inst.appliance_runtime_deadline = _get_time_object(appliance_runtime_deadline)
         inst.wallbox_state_entity = wallbox_state 
         try:
@@ -839,6 +850,13 @@ class PvExcessControl:
                         * PvExcessControl.grid_voltage
                         * inst.phases
                     )
+                    # Threshold for dynamic appliances: min_solar_percent of min_current power
+                    # (consistent with switch-off logic which also uses min_current as base)
+                    min_current_power = int(
+                        inst.min_current
+                        * PvExcessControl.grid_voltage
+                        * inst.phases
+                    )
                     if (
                         avg_excess_power >= defined_power
                         or (inst.appliance_priority > 1000 and avg_excess_power > 0)
@@ -847,12 +865,12 @@ class PvExcessControl:
                         )
                         or (
                             avg_excess_power
-                            >= int(defined_power * inst.min_solar_percent)
+                            >= int(min_current_power * inst.min_solar_percent)
                             and inst.dynamic_current_appliance
                         )
                     ):
                         log.debug(
-                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) is high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {defined_power * inst.min_solar_percent}."
+                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) is high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {min_current_power * inst.min_solar_percent}W ({inst.min_solar_percent*100:.0f}% of min_current {inst.min_current}A)."
                         )
                         if (
                             inst.switch_interval_counter
@@ -904,7 +922,7 @@ class PvExcessControl:
                                 )
                     else:
                         log.debug(
-                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) not high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {defined_power * inst.min_solar_percent}."
+                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) not high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {min_current_power * inst.min_solar_percent}W ({inst.min_solar_percent*100:.0f}% of min_current {inst.min_current}A)."
                         )
                 # -------------------------------------------------------------------
 
@@ -928,13 +946,13 @@ class PvExcessControl:
                     ) / 60
 
                     # For run-once appliances: if remaining PV excess forecast is not enough
-                    # to finish the minimum runtime, switch off and keep it off for today.
+                    # to finish the configured forecast runtime, switch off and keep it off for today.
                     if (
                         inst.appliance_once_only
                         and self._forecast_too_low_for_remaining_runtime(inst, run_time)
                     ):
                         log.info(
-                            f"{inst.log_prefix} Remaining PV excess forecast is too low to complete minimum runtime. "
+                            f"{inst.log_prefix} Remaining PV excess forecast is too low to complete configured forecast runtime. "
                             f"Switching off appliance for the rest of the day."
                         )
                         power_consumption = self.switch_off(inst)
@@ -1634,10 +1652,10 @@ class PvExcessControl:
     def _forecast_too_low_for_remaining_runtime(self, inst, current_run_time) -> bool:
         """
         Check whether remaining PV excess forecast is insufficient to finish
-        the appliance minimum runtime for today.
+        the configured forecast runtime for today.
         """
         if (
-            inst.appliance_minimum_run_time <= 0
+            inst.appliance_forecast_runtime <= 0
             or PvExcessControl.solar_production_forecast is None
             or PvExcessControl.time_of_sunset is None
         ):
@@ -1646,7 +1664,7 @@ class PvExcessControl:
         forecast_margin = 1.2  # 20% safety margin
 
         remaining_runtime_min = max(
-            0.0, inst.appliance_minimum_run_time - float(current_run_time)
+            0.0, inst.appliance_forecast_runtime - float(current_run_time)
         )
         if remaining_runtime_min <= 0:
             return False
