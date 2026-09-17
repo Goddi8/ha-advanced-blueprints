@@ -869,9 +869,18 @@ class PvExcessControl:
                             and inst.dynamic_current_appliance
                         )
                     ):
-                        log.debug(
-                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) is high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {min_current_power * inst.min_solar_percent}W ({inst.min_solar_percent*100:.0f}% of min_current {inst.min_current}A)."
-                        )
+                        if inst.dynamic_current_appliance:
+                            log.debug(
+                                f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) is high enough to switch on dynamic appliance "
+                                f"(threshold: {int(min_current_power * inst.min_solar_percent)} W = {inst.min_solar_percent*100:.0f}% of min_current {inst.min_current} A = {min_current_power} W) "
+                                f"or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet."
+                            )
+                        else:
+                            log.debug(
+                                f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) is high enough to switch on appliance "
+                                f"(threshold: {defined_power} W) "
+                                f"or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet."
+                            )
                         if (
                             inst.switch_interval_counter
                             >= inst.appliance_switch_interval
@@ -921,9 +930,16 @@ class PvExcessControl:
                                     inst.appliance_current_set_entity, inst.min_current
                                 )
                     else:
-                        log.debug(
-                            f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) not high enough to switch on appliance with {defined_power} or appliance has high priority {inst.appliance_priority} or it didn't meet minimum runtime yet or minimum solar power percentage (to start) fits: {min_current_power * inst.min_solar_percent}W ({inst.min_solar_percent*100:.0f}% of min_current {inst.min_current}A)."
-                        )
+                        if inst.dynamic_current_appliance:
+                            log.debug(
+                                f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) not high enough to switch on dynamic appliance "
+                                f"(threshold: {int(min_current_power * inst.min_solar_percent)} W = {inst.min_solar_percent*100:.0f}% of min_current {inst.min_current} A = {min_current_power} W)."
+                            )
+                        else:
+                            log.debug(
+                                f"{inst.log_prefix} Average Excess power ({avg_excess_power} W) not high enough to switch on appliance "
+                                f"(threshold: {defined_power} W)."
+                            )
                 # -------------------------------------------------------------------
 
             # ----------------------------------- go through each appliance (lowest prio to highest prio) ----------------------------------
